@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.plugintemplate-for-obs"
+            "bundleId": "com.letsdovideo.iso-for-obs"
         }
     },
-    "name": "obs-zoom-connector",
-    "displayName": "Zoom Connector for OBS",
-    "version": "1.0.0",
-    "author": "David Maldow",
-    "website": "https://example.com",
-    "email": "me@example.com"
+    "name": "iso-for-obs",
+    "displayName": "ISO for OBS",
+    "version": "0.1.0",
+    "author": "David Maldow / Let's Do Video",
+    "website": "https://letsdovideo.com/iso-for-obs-documentation/",
+    "email": "david@letsdovideo.com"
 }
