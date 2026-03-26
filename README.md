@@ -6,7 +6,7 @@ The plugin template is meant to be used as a starting point for OBS Studio plugi
 
 * Boilerplate plugin source code
 * A CMake project file
-* GitHub Actions workflows and repository actions
+* GitHub Actions workflows and repository actions 
 
 ## Supported Build Environments
 
