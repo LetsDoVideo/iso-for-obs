@@ -122,7 +122,7 @@ Sometimes a newly created Zoom Participant source will have approximately 1 seco
 
 ## Legal
 
-ISO for OBS is an independent integration and is not officially endorsed by the OBS Project or Zoom Video Communications, Inc.
-OBS Studio is a trademark of the OBS Project. Zoom is a trademark of Zoom Video Communications, Inc.
+ISO for OBS is an independent integration and is not officially endorsed by the OBS Project or Zoom Communications, Inc.
+OBS Studio is a trademark of the OBS Project. Zoom is a trademark of Zoom Communications, Inc.
 
 © 2026 Let's Do Video. Licensed under GPL-2.0.
