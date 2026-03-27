@@ -2,6 +2,8 @@
 
 **Pull individual Zoom participant video feeds (ISO) directly into OBS Studio as dedicated sources.**
 
+https://github.com/user-attachments/assets/3b861b97-1134-487a-94b7-51a2d7d1844c
+
 <a href="https://youtu.be/ApPm0OoGWWI" target="_blank">
   <img src="assets/hero.png" alt="Watch ISO for OBS Demo Video" width="100%"/>
 </a>
