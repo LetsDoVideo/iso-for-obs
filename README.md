@@ -4,10 +4,6 @@
 
 https://github.com/user-attachments/assets/3b861b97-1134-487a-94b7-51a2d7d1844c
 
-<a href="https://youtu.be/ApPm0OoGWWI" target="_blank">
-  <img src="assets/hero.png" alt="Watch ISO for OBS Demo Video" width="100%"/>
-</a>
-
 ISO for OBS is a native Windows plugin for OBS Studio that uses the Zoom Meeting SDK to give broadcasters clean, isolated video feeds from each Zoom participant. No screen capturing, no grid layouts, just raw high-quality video piped directly into your OBS scene.
 
 ---
