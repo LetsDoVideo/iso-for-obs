@@ -77,6 +77,7 @@ Upgrade your tier at the [Zoom App Marketplace](https://marketplace.zoom.us).
 ## Known Issues
 
 **Occasional 1-second video latency on new sources**
+
 Sometimes a newly created Zoom Participant source will have approximately 1 second of video latency. If this occurs, delete the source and re-add it. The latency will not return. This is a known issue being addressed in the next release.
 
 ---
@@ -84,15 +85,19 @@ Sometimes a newly created Zoom Participant source will have approximately 1 seco
 ## Troubleshooting
 
 **Participant list is empty after connecting**
+
 Click the **Refresh Participant List** button in the source Properties window.
 
 **Black screen / 0x0 pixels on a source**
+
 Delete the source and re-add it after connecting to the meeting.
 
 **The host saw a "Request to livestream" popup. Is that normal?**
+
 Yes. Click Allow. This is how the plugin accesses raw video feeds via the Zoom SDK.
 
 **How do I update the plugin?**
+
 Download the latest release ZIP from the [Releases](https://github.com/LetsDoVideo/iso-for-obs/releases) page and replace the existing files in your OBS folder.
 
 For full documentation visit [letsdovideo.com/iso-for-obs-documentation](https://letsdovideo.com/iso-for-obs-documentation/)
