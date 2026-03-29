@@ -64,5 +64,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ISO-for-OBS-Windows
+          name: Isolated-Feeds-for-OBS-Windows
           path: dist/
