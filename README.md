@@ -1,10 +1,10 @@
-# ISO for OBS (Zoom)
+# Isolated Feeds for OBS (Zoom)
 
-**Pull individual Zoom participant video feeds (ISO) directly into OBS Studio as dedicated sources.**
+**Pull individual Zoom participant video feeds directly into OBS Studio as dedicated sources.**
 
 https://github.com/user-attachments/assets/3b861b97-1134-487a-94b7-51a2d7d1844c
 
-ISO for OBS is a native Windows plugin for OBS Studio that uses the Zoom Meeting SDK to give broadcasters clean, isolated video feeds from each Zoom participant. No screen capturing, no grid layouts, just raw high-quality video piped directly into your OBS scene.
+Isolated Feeds for OBS is a native Windows plugin for OBS Studio that uses the Zoom Meeting SDK to give broadcasters clean, isolated video feeds from each Zoom participant. No screen capturing, no grid layouts, just raw high-quality video piped directly into your OBS scene.
 
 ---
 
@@ -19,7 +19,7 @@ ISO for OBS is a native Windows plugin for OBS Studio that uses the Zoom Meeting
 
 ## Installation
 
-1. Download the latest **ISO-for-OBS-Windows.zip** from the [Releases](https://github.com/LetsDoVideo/iso-for-obs/releases) page
+1. Download the latest **Isolated-Feeds-for-OBS-Windows.zip** from the [Releases](https://github.com/LetsDoVideo/iso-for-obs/releases) page
 2. Extract the ZIP file
 3. Copy the extracted contents into your OBS Studio root folder
    - For standard OBS installs: `C:\Program Files\obs-studio\`
@@ -122,7 +122,7 @@ Sometimes a newly created Zoom Participant source will have approximately 1 seco
 
 ## Legal
 
-ISO for OBS is an independent integration and is not officially endorsed by the OBS Project or Zoom Communications, Inc.
+Isolated Feeds for OBS is an independent integration and is not officially endorsed by the OBS Project or Zoom Communications, Inc.
 OBS Studio is a trademark of the OBS Project. Zoom is a trademark of Zoom Communications, Inc.
 
 © 2026 Let's Do Video. Licensed under GPL-2.0.
