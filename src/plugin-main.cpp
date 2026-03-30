@@ -767,7 +767,7 @@ struct obs_source_info zoom_participant_info = {};
 struct obs_source_info zoom_screenshare_info = {};
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE("iso-for-obs", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("feeds", "en-US")
 
 bool obs_module_load(void) {
     zoom_participant_info.id             = "zoom_participant_source";
