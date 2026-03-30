@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build ISO for OBS
+    name: Build Feeds
     runs-on: windows-latest
     steps:
       - name: Checkout Code
@@ -42,12 +42,12 @@ jobs:
         run: |
           # Plugin files -> obs-plugins/64bit/
           New-Item -ItemType Directory -Force -Path "dist/obs-plugins/64bit"
-          Copy-Item "build/Release/iso-for-obs.dll" -Destination "dist/obs-plugins/64bit/"
-          Copy-Item "build/Release/iso-for-obs.pdb" -Destination "dist/obs-plugins/64bit/"
+          Copy-Item "build/Release/feeds.dll" -Destination "dist/obs-plugins/64bit/"
+          Copy-Item "build/Release/feeds.pdb" -Destination "dist/obs-plugins/64bit/"
 
           # Locale file -> data/obs-plugins/iso-for-obs/locale/
-          New-Item -ItemType Directory -Force -Path "dist/data/obs-plugins/iso-for-obs/locale"
-          Copy-Item "data/locale/en-US.ini" -Destination "dist/data/obs-plugins/iso-for-obs/locale/"
+          New-Item -ItemType Directory -Force -Path "dist/data/obs-plugins/feeds/locale"
+          Copy-Item "data/locale/en-US.ini" -Destination "dist/data/obs-plugins/feeds/locale/"
 
           # Zoom SDK runtime files -> bin/64bit/ (flat)
           New-Item -ItemType Directory -Force -Path "dist/bin/64bit"
@@ -64,5 +64,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Isolated-Feeds-for-OBS-Windows
+          name: Feeds
           path: dist/
