@@ -43,7 +43,7 @@
 // TIER GATING
 // 0 = Free (1 feed), 1 = Basic (3 feeds), 2 = Streamer (5 feeds), 3 = Broadcaster (10 feeds)
 // ---------------------------------------------------------------------------
-static int g_currentTier = 0;
+static int g_currentTier = 1;
 static int g_activeParticipantSources = 0;
 
 static int GetMaxFeedsForTier() {
