@@ -41,7 +41,7 @@
 
 // ---------------------------------------------------------------------------
 // TIER GATING
-// 0 = Free (1 feed), 1 = Basic (3 feeds), 2 = Streamer (5 feeds), 3 = Broadcaster (10 feeds)
+// 0 = Free (1 feed), 1 = Basic (3 feeds), 2 = Streamer (5 feeds), 3 = Broadcaster (8 feeds)
 // ---------------------------------------------------------------------------
 static int g_currentTier = 1;
 static int g_activeParticipantSources = 0;
@@ -50,7 +50,7 @@ static int GetMaxFeedsForTier() {
     switch (g_currentTier) {
         case 1:  return 3;
         case 2:  return 5;
-        case 3:  return 10;
+        case 3:  return 8;
         default: return 1;
     }
 }
@@ -244,9 +244,19 @@ public:
             videoRenderer->unSubscribe();
             unsigned int effectiveId = (current_user_id == 1)
                 ? g_activeSpeakerUserId : current_user_id;
-            if (effectiveId != 0)
+            if (effectiveId != 0) {
                 videoRenderer->subscribe(effectiveId,
                                          ZOOM_SDK_NAMESPACE::RAW_DATA_TYPE_VIDEO);
+                // Double-init to eliminate first-frame latency
+                QTimer::singleShot(600, [this, effectiveId]() {
+                    if (videoRenderer && current_user_id != 0) {
+                        videoRenderer->unSubscribe();
+                        videoCatcher.next_timestamp = 0;
+                        videoRenderer->subscribe(effectiveId,
+                                                 ZOOM_SDK_NAMESPACE::RAW_DATA_TYPE_VIDEO);
+                    }
+                });
+            }
         }
     }
 
@@ -595,13 +605,13 @@ void OnConnectClick() {
 void SetupPluginMenu(void) {
     QMainWindow* mainWindow = (QMainWindow*)obs_frontend_get_main_window();
     QMenuBar* menuBar = mainWindow->menuBar();
-    QMenu* isoMenu = new QMenu("Feeds", menuBar);
-    menuBar->addMenu(isoMenu);
-    g_connectAction = isoMenu->addAction("Connect to Zoom...");
-    QAction* aboutAction = isoMenu->addAction("About / Tier Status");
+    QMenu* feedsMenu = new QMenu("Feeds", menuBar);
+    menuBar->addMenu(feedsMenu);
+    g_connectAction = feedsMenu->addAction("Connect to Zoom...");
+    QAction* aboutAction = feedsMenu->addAction("About / Tier Status");
     QObject::connect(g_connectAction, &QAction::triggered, []() { OnConnectClick(); });
     QObject::connect(aboutAction, &QAction::triggered, []() {
-        MessageBoxA(NULL, "Feeds v0.1\nTier: Free\nStatus: Active",
+        MessageBoxA(NULL, "Feeds v0.1\nTier: Basic\nStatus: Active",
                     "About", MB_OK);
     });
 }
@@ -651,11 +661,23 @@ static obs_properties_t* zp_properties(void* data) {
                           std::to_string(info->GetMeetingNumber());
         obs_properties_add_text(props, "status_label", status_text.c_str(),
                                 OBS_TEXT_INFO);
-        obs_properties_add_button(props, "refresh_btn",
+
+        ZoomParticipantSource* src = static_cast<ZoomParticipantSource*>(data);
+        obs_properties_add_button2(props, "refresh_btn",
             "Refresh Participant List",
-            [](obs_properties_t*, obs_property_t*, void*) -> bool {
+            [](obs_properties_t*, obs_property_t*, void* data) -> bool {
+                ZoomParticipantSource* src =
+                    static_cast<ZoomParticipantSource*>(data);
+                if (src) {
+                    obs_data_t* settings =
+                        obs_source_get_settings(src->source);
+                    if (settings) {
+                        src->update(settings);
+                        obs_data_release(settings);
+                    }
+                }
                 return true;
-            });
+            }, src);
     }
 
     ZoomParticipantSource* src = static_cast<ZoomParticipantSource*>(data);
@@ -673,11 +695,13 @@ static obs_properties_t* zp_properties(void* data) {
         ZOOM_SDK_NAMESPACE::IMeetingParticipantsController* pc =
             ms->GetMeetingParticipantsController();
         if (pc) {
-            ZOOM_SDK_NAMESPACE::IList<unsigned int>* userList = pc->GetParticipantsList();
+            ZOOM_SDK_NAMESPACE::IList<unsigned int>* userList =
+                pc->GetParticipantsList();
             if (userList) {
                 for (int i = 0; i < userList->GetCount(); i++) {
                     unsigned int uid = userList->GetItem(i);
-                    ZOOM_SDK_NAMESPACE::IUserInfo* info = pc->GetUserByUserID(uid);
+                    ZOOM_SDK_NAMESPACE::IUserInfo* info =
+                        pc->GetUserByUserID(uid);
                     if (info) {
                         std::wstring wname = info->GetUserName();
                         if (wname == L"Feeds") continue;
@@ -685,9 +709,12 @@ static obs_properties_t* zp_properties(void* data) {
                             CP_UTF8, 0, &wname[0], (int)wname.size(),
                             NULL, 0, NULL, NULL);
                         std::string name(size_needed, 0);
-                        WideCharToMultiByte(CP_UTF8, 0, &wname[0], (int)wname.size(),
-                                            &name[0], size_needed, NULL, NULL);
-                        obs_property_list_add_int(list, name.c_str(), (long long)uid);
+                        WideCharToMultiByte(CP_UTF8, 0, &wname[0],
+                                            (int)wname.size(),
+                                            &name[0], size_needed,
+                                            NULL, NULL);
+                        obs_property_list_add_int(list, name.c_str(),
+                                                  (long long)uid);
                     }
                 }
             }
