@@ -912,7 +912,61 @@ void OnLogoutClick() {
     MessageBoxA(NULL, "You have been logged out of Zoom.",
                 "Feeds - Logout", MB_OK | MB_ICONINFORMATION);
 }
+// ---------------------------------------------------------------------------
+// FETCH USER INFO (ZAK + display name) via Zoom REST API
+// Returns true on success, fills out zak and displayName
+// ---------------------------------------------------------------------------
+static bool FetchUserInfo(std::string& zak, std::string& displayName) {
+    auto doGet = [](const std::wstring& path) -> std::string {
+        HINTERNET hSession = WinHttpOpen(L"Feeds/1.0",
+                                          WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                          WINHTTP_NO_PROXY_NAME,
+                                          WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!hSession) return "";
+        HINTERNET hConnect = WinHttpConnect(hSession, L"api.zoom.us",
+                                             INTERNET_DEFAULT_HTTPS_PORT, 0);
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(),
+                                                 nullptr, WINHTTP_NO_REFERER,
+                                                 WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                                 WINHTTP_FLAG_SECURE);
+        // Authorization: Bearer {access_token}
+        std::wstring authHeader = L"Authorization: Bearer " +
+            std::wstring(g_accessToken.begin(), g_accessToken.end());
+        WinHttpAddRequestHeaders(hRequest, authHeader.c_str(),
+                                 (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
 
+        WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           nullptr, 0, 0, 0);
+        WinHttpReceiveResponse(hRequest, nullptr);
+
+        std::string response;
+        char buf[4096];
+        DWORD bytesRead = 0;
+        while (WinHttpReadData(hRequest, buf, sizeof(buf) - 1, &bytesRead)
+               && bytesRead > 0) {
+            buf[bytesRead] = '\0';
+            response += buf;
+        }
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return response;
+    };
+
+    // Get display name from /v2/users/me
+    std::string userResponse = doGet(L"/v2/users/me");
+    displayName = JsonExtractString(userResponse, "display_name");
+    if (displayName.empty())
+        displayName = JsonExtractString(userResponse, "first_name");
+    if (displayName.empty()) return false;
+
+    // Get ZAK from /v2/users/me/zak
+    std::string zakResponse = doGet(L"/v2/users/me/zak");
+    zak = JsonExtractString(zakResponse, "token");
+    if (zak.empty()) return false;
+
+    return true;
+}
 // ---------------------------------------------------------------------------
 // CONNECT TO MEETING HELPER
 // ---------------------------------------------------------------------------
@@ -948,6 +1002,16 @@ void OnConnectClick() {
         QLineEdit::Normal, "", &okPwd);
     if (!okPwd) return;
 
+    // Fetch ZAK and display name using our OAuth access token
+    std::string zak, displayName;
+    if (!FetchUserInfo(zak, displayName)) {
+        MessageBoxA(NULL,
+            "Could not retrieve your Zoom account details.\n\n"
+            "Your login may have expired — please log out and log in again.",
+            "Feeds - Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+
     input = input.trimmed();
 
     ZOOM_SDK_NAMESPACE::JoinParam joinParam;
@@ -956,7 +1020,17 @@ void OnConnectClick() {
         joinParam.param.withoutloginuserJoin;
     param.isAudioOff = true;
     param.isVideoOff = true;
-    param.userName   = L"Feeds";
+
+    // Join as the authenticated user, not as anonymous "Feeds"
+    static std::wstring s_userName;
+    s_userName = std::wstring(displayName.begin(), displayName.end());
+    param.userName = s_userName.c_str();
+
+    // ZAK identifies the user to Zoom — grants host privileges,
+    // bypasses waiting room for own meetings, satisfies March 2026 requirement
+    static std::wstring s_zak;
+    s_zak = std::wstring(zak.begin(), zak.end());
+    param.userZAK = s_zak.c_str();
 
     static std::wstring s_password;
     if (!password.trimmed().isEmpty()) {
@@ -967,7 +1041,7 @@ void OnConnectClick() {
     static std::wstring s_vanityId;
 
     if (input.contains("zoom.us/my/")) {
-        int start    = input.indexOf("zoom.us/my/") + 11;
+        int start = input.indexOf("zoom.us/my/") + 11;
         QString vanityId = input.mid(start).split(
             QRegularExpression("[?\\s]")).first();
         s_vanityId     = vanityId.toStdWString();
