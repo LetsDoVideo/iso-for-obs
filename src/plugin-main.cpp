@@ -64,8 +64,13 @@ static ZOOM_SDK_NAMESPACE::ZoomSDKResolution GetResolutionForTier() {
 // GLOBALS
 // ---------------------------------------------------------------------------
 static bool g_rawLiveStreamGranted = false;
-static QAction* g_connectAction = nullptr;
-static unsigned int g_activeSharerUserId = 0;
+static QAction* g_connectAction    = nullptr;
+static QAction* g_loginAction      = nullptr;
+static QAction* g_logoutAction     = nullptr;
+static bool g_isLoggedIn           = false;
+static bool g_pendingMeetingJoin   = false;
+
+static unsigned int g_activeSharerUserId  = 0;
 static unsigned int g_activeShareSourceId = 0;
 static unsigned int g_activeSpeakerUserId = 0;
 
@@ -79,16 +84,16 @@ public:
 
     virtual void onRawDataFrameReceived(YUVRawDataI420* data) override {
         if (!target) return;
-        unsigned int width = data->GetStreamWidth();
+        unsigned int width  = data->GetStreamWidth();
         unsigned int height = data->GetStreamHeight();
 
         struct obs_source_frame obs_frame = {};
-        obs_frame.format = VIDEO_FORMAT_I420;
-        obs_frame.width = width;
-        obs_frame.height = height;
-        obs_frame.data[0] = (uint8_t*)data->GetYBuffer();
-        obs_frame.data[1] = (uint8_t*)data->GetUBuffer();
-        obs_frame.data[2] = (uint8_t*)data->GetVBuffer();
+        obs_frame.format    = VIDEO_FORMAT_I420;
+        obs_frame.width     = width;
+        obs_frame.height    = height;
+        obs_frame.data[0]   = (uint8_t*)data->GetYBuffer();
+        obs_frame.data[1]   = (uint8_t*)data->GetUBuffer();
+        obs_frame.data[2]   = (uint8_t*)data->GetVBuffer();
         obs_frame.linesize[0] = width;
         obs_frame.linesize[1] = width / 2;
         obs_frame.linesize[2] = width / 2;
@@ -112,23 +117,23 @@ public:
 // ---------------------------------------------------------------------------
 // SCREENSHARE GLOBALS
 // ---------------------------------------------------------------------------
-static obs_source_t* g_screenshareSource = nullptr;
-static uint64_t g_screenshare_timestamp = 0;
+static obs_source_t* g_screenshareSource   = nullptr;
+static uint64_t      g_screenshare_timestamp = 0;
 
 class ZoomShareCatcher : public ZOOM_SDK_NAMESPACE::IZoomSDKRendererDelegate {
 public:
     virtual void onRawDataFrameReceived(YUVRawDataI420* data) override {
         if (!g_screenshareSource) return;
-        unsigned int width = data->GetStreamWidth();
+        unsigned int width  = data->GetStreamWidth();
         unsigned int height = data->GetStreamHeight();
 
         struct obs_source_frame obs_frame = {};
-        obs_frame.format = VIDEO_FORMAT_I420;
-        obs_frame.width = width;
-        obs_frame.height = height;
-        obs_frame.data[0] = (uint8_t*)data->GetYBuffer();
-        obs_frame.data[1] = (uint8_t*)data->GetUBuffer();
-        obs_frame.data[2] = (uint8_t*)data->GetVBuffer();
+        obs_frame.format    = VIDEO_FORMAT_I420;
+        obs_frame.width     = width;
+        obs_frame.height    = height;
+        obs_frame.data[0]   = (uint8_t*)data->GetYBuffer();
+        obs_frame.data[1]   = (uint8_t*)data->GetUBuffer();
+        obs_frame.data[2]   = (uint8_t*)data->GetVBuffer();
         obs_frame.linesize[0] = width;
         obs_frame.linesize[1] = width / 2;
         obs_frame.linesize[2] = width / 2;
@@ -149,7 +154,7 @@ public:
     virtual void onRendererBeDestroyed() override {}
 };
 
-static ZoomShareCatcher g_shareCatcher;
+static ZoomShareCatcher                    g_shareCatcher;
 static ZOOM_SDK_NAMESPACE::IZoomSDKRenderer* g_shareRenderer = nullptr;
 
 // ---------------------------------------------------------------------------
@@ -184,8 +189,8 @@ static void UpdateShareSubscription() {
 class ZoomParticipantSource {
 public:
     obs_source_t* source = nullptr;
-    unsigned int current_user_id = 0;
-    ZoomVideoCatcher videoCatcher;
+    unsigned int  current_user_id = 0;
+    ZoomVideoCatcher                     videoCatcher;
     ZOOM_SDK_NAMESPACE::IZoomSDKRenderer* videoRenderer = nullptr;
 
     ZoomParticipantSource(obs_source_t* src) : source(src) {
@@ -304,13 +309,13 @@ public:
         switch (shareInfo.status) {
             case ZOOM_SDK_NAMESPACE::Sharing_Other_Share_Begin:
             case ZOOM_SDK_NAMESPACE::Sharing_Self_Send_Begin:
-                g_activeSharerUserId = shareInfo.userid;
+                g_activeSharerUserId  = shareInfo.userid;
                 g_activeShareSourceId = shareInfo.shareSourceID;
                 UpdateShareSubscription();
                 break;
             case ZOOM_SDK_NAMESPACE::Sharing_Other_Share_End:
             case ZOOM_SDK_NAMESPACE::Sharing_Self_Send_End:
-                g_activeSharerUserId = 0;
+                g_activeSharerUserId  = 0;
                 g_activeShareSourceId = 0;
                 UpdateShareSubscription();
                 break;
@@ -442,11 +447,12 @@ public:
 
         if (status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_ENDED ||
             status == ZOOM_SDK_NAMESPACE::MEETING_STATUS_DISCONNECTING) {
-            g_rawLiveStreamGranted = false;
-            g_activeSharerUserId = 0;
-            g_activeShareSourceId = 0;
-            g_activeSpeakerUserId = 0;
-            if (g_connectAction)
+            g_rawLiveStreamGranted  = false;
+            g_activeSharerUserId    = 0;
+            g_activeShareSourceId   = 0;
+            g_activeSpeakerUserId   = 0;
+            // Re-enable Connect to Zoom Meeting (user is still logged in)
+            if (g_connectAction && g_isLoggedIn)
                 g_connectAction->setEnabled(true);
             if (g_shareRenderer) {
                 g_shareRenderer->unSubscribe();
@@ -474,78 +480,36 @@ public:
 static ZoomMeetingListener g_meetingListener;
 
 // ---------------------------------------------------------------------------
+// FORWARD DECLARATIONS for login/connect (defined below SetupPluginMenu)
+// ---------------------------------------------------------------------------
+void OnLoginClick();
+void OnLogoutClick();
+void OnConnectClick();
+
+// ---------------------------------------------------------------------------
 // AUTH LISTENER
 // ---------------------------------------------------------------------------
 class ZoomAuthListener : public ZOOM_SDK_NAMESPACE::IAuthServiceEvent {
 public:
     virtual void onAuthenticationReturn(ZOOM_SDK_NAMESPACE::AuthResult ret) override {
-        if (ret != ZOOM_SDK_NAMESPACE::AUTHRET_SUCCESS) return;
-
-        ZOOM_SDK_NAMESPACE::IMeetingService* ms = nullptr;
-        ZOOM_SDK_NAMESPACE::CreateMeetingService(&ms);
-        if (!ms) return;
-        ms->SetEvent(&g_meetingListener);
-
-        QMainWindow* mainWindow = (QMainWindow*)obs_frontend_get_main_window();
-
-        bool ok = false;
-        QString input = QInputDialog::getText(
-            mainWindow,
-            "Join Zoom Meeting",
-            "Enter your Zoom Meeting number or link:",
-            QLineEdit::Normal,
-            "",
-            &ok);
-        if (!ok || input.trimmed().isEmpty()) return;
-
-        bool okPwd = false;
-        QString password = QInputDialog::getText(
-            mainWindow,
-            "Meeting Password",
-            "Enter meeting password (leave blank if none):",
-            QLineEdit::Normal,
-            "",
-            &okPwd);
-        if (!okPwd) return;
-
-        input = input.trimmed();
-
-        ZOOM_SDK_NAMESPACE::JoinParam joinParam;
-        joinParam.userType = ZOOM_SDK_NAMESPACE::SDK_UT_WITHOUT_LOGIN;
-        ZOOM_SDK_NAMESPACE::JoinParam4WithoutLogin& param = joinParam.param.withoutloginuserJoin;
-        param.isAudioOff = true;
-        param.isVideoOff = true;
-        param.userName = L"Feeds";
-
-        static std::wstring s_password;
-        if (!password.trimmed().isEmpty()) {
-            s_password = password.trimmed().toStdWString();
-            param.psw = s_password.c_str();
+        if (ret != ZOOM_SDK_NAMESPACE::AUTHRET_SUCCESS) {
+            MessageBoxA(NULL,
+                "Zoom authentication failed. Please try logging in again.",
+                "Feeds - Auth Failed", MB_OK | MB_ICONERROR);
+            return;
         }
 
-        static std::wstring s_vanityId;
+        // Mark as logged in, update menu state
+        g_isLoggedIn = true;
+        if (g_loginAction)   g_loginAction->setEnabled(false);
+        if (g_logoutAction)  g_logoutAction->setEnabled(true);
+        if (g_connectAction) g_connectAction->setEnabled(true);
 
-        if (input.contains("zoom.us/my/")) {
-            int start = input.indexOf("zoom.us/my/") + 11;
-            QString vanityId = input.mid(start).split(
-                QRegularExpression("[?\\s]")).first();
-            s_vanityId = vanityId.toStdWString();
-            param.vanityID = s_vanityId.c_str();
-        } else if (input.contains("zoom.us/j/")) {
-            int start = input.indexOf("zoom.us/j/") + 10;
-            QString numStr = input.mid(start).split(
-                QRegularExpression("[?\\s]")).first();
-            numStr = numStr.replace(QRegularExpression("[^0-9]"), "");
-            if (numStr.isEmpty()) return;
-            param.meetingNumber = numStr.toULongLong();
-        } else {
-            QString numStr = input.replace(QRegularExpression("[\\s\\-]"), "");
-            numStr = numStr.replace(QRegularExpression("[^0-9]"), "");
-            if (numStr.isEmpty()) return;
-            param.meetingNumber = numStr.toULongLong();
+        // If they clicked "Connect to Zoom Meeting" before logging in, proceed now
+        if (g_pendingMeetingJoin) {
+            g_pendingMeetingJoin = false;
+            QTimer::singleShot(200, []() { OnConnectClick(); });
         }
-
-        ms->Join(joinParam);
     }
 
     virtual void onLoginReturnWithReason(ZOOM_SDK_NAMESPACE::LOGINSTATUS ret,
@@ -585,17 +549,131 @@ static void StartPostConnectRefreshTimer() {
 }
 
 // ---------------------------------------------------------------------------
-// CONNECT HELPER
+// LOGIN HELPER (PKCE stub — real browser flow comes in Step 2)
 // ---------------------------------------------------------------------------
-void OnConnectClick() {
+void OnLoginClick() {
+    if (g_isLoggedIn) {
+        MessageBoxA(NULL, "You are already logged in to Zoom.",
+                    "Feeds - Login", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    // STUB: authenticates SDK with publicAppKey directly.
+    // Step 2 will replace this with the full PKCE browser + token exchange flow.
     ZOOM_SDK_NAMESPACE::IAuthService* auth_service = nullptr;
     if (ZOOM_SDK_NAMESPACE::CreateAuthService(&auth_service) != ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS
         || !auth_service)
         return;
     auth_service->SetEvent(&g_authListener);
+
     ZOOM_SDK_NAMESPACE::AuthContext authContext;
-    authContext.jwt_token = L"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcHBLZXkiOiJZNzNqelFSbVF4aWhoNFo3MnFSMnRnIiwiaWF0IjoxNzc0MDUwMDAwLCJleHAiOjQxMDI0NDQ4MDAsInRva2VuRXhwIjo0MTAyNDQ0ODAwLCJyb2xlIjoxLCJ1c2VyRW1haWwiOiJEYXZpZEBMZXRzRG9WaWRlby5jb20ifQ.8Hgz4-urKak3PlemhvlsysNFV6J2KmJgkP8Wn6MDn90";
+    static std::wstring s_clientId = L"JlP6KfRqTt6r0t67FcDuqQ";
+    authContext.publicAppKey = s_clientId.c_str();
     auth_service->SDKAuth(authContext);
+}
+
+// ---------------------------------------------------------------------------
+// LOGOUT HELPER
+// ---------------------------------------------------------------------------
+void OnLogoutClick() {
+    if (!g_isLoggedIn) {
+        MessageBoxA(NULL, "You are not currently logged in to Zoom.",
+                    "Feeds - Logout", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    ZOOM_SDK_NAMESPACE::IAuthService* auth_service = nullptr;
+    if (ZOOM_SDK_NAMESPACE::CreateAuthService(&auth_service) != ZOOM_SDK_NAMESPACE::SDKERR_SUCCESS
+        || !auth_service)
+        return;
+    auth_service->LogOut();
+
+    g_isLoggedIn         = false;
+    g_pendingMeetingJoin = false;
+    if (g_loginAction)   g_loginAction->setEnabled(true);
+    if (g_logoutAction)  g_logoutAction->setEnabled(false);
+    if (g_connectAction) g_connectAction->setEnabled(false);
+
+    MessageBoxA(NULL, "You have been logged out of Zoom.",
+                "Feeds - Logout", MB_OK | MB_ICONINFORMATION);
+}
+
+// ---------------------------------------------------------------------------
+// CONNECT TO MEETING HELPER
+// ---------------------------------------------------------------------------
+void OnConnectClick() {
+    if (!g_isLoggedIn) {
+        // Remember they wanted to join a meeting, then trigger login first
+        g_pendingMeetingJoin = true;
+        MessageBoxA(NULL,
+            "You need to log in to Zoom first.\n\n"
+            "Please log in and then try Connect to Zoom Meeting again.",
+            "Feeds - Login Required", MB_OK | MB_ICONINFORMATION);
+        OnLoginClick();
+        return;
+    }
+
+    ZOOM_SDK_NAMESPACE::IMeetingService* ms = nullptr;
+    ZOOM_SDK_NAMESPACE::CreateMeetingService(&ms);
+    if (!ms) return;
+    ms->SetEvent(&g_meetingListener);
+
+    QMainWindow* mainWindow = (QMainWindow*)obs_frontend_get_main_window();
+
+    bool ok = false;
+    QString input = QInputDialog::getText(
+        mainWindow,
+        "Join Zoom Meeting",
+        "Enter your Zoom Meeting number or link:",
+        QLineEdit::Normal, "", &ok);
+    if (!ok || input.trimmed().isEmpty()) return;
+
+    bool okPwd = false;
+    QString password = QInputDialog::getText(
+        mainWindow,
+        "Meeting Password",
+        "Enter meeting password (leave blank if none):",
+        QLineEdit::Normal, "", &okPwd);
+    if (!okPwd) return;
+
+    input = input.trimmed();
+
+    ZOOM_SDK_NAMESPACE::JoinParam joinParam;
+    joinParam.userType = ZOOM_SDK_NAMESPACE::SDK_UT_WITHOUT_LOGIN;
+    ZOOM_SDK_NAMESPACE::JoinParam4WithoutLogin& param = joinParam.param.withoutloginuserJoin;
+    param.isAudioOff = true;
+    param.isVideoOff = true;
+    param.userName   = L"Feeds";
+
+    static std::wstring s_password;
+    if (!password.trimmed().isEmpty()) {
+        s_password = password.trimmed().toStdWString();
+        param.psw  = s_password.c_str();
+    }
+
+    static std::wstring s_vanityId;
+
+    if (input.contains("zoom.us/my/")) {
+        int start = input.indexOf("zoom.us/my/") + 11;
+        QString vanityId = input.mid(start).split(
+            QRegularExpression("[?\\s]")).first();
+        s_vanityId       = vanityId.toStdWString();
+        param.vanityID   = s_vanityId.c_str();
+    } else if (input.contains("zoom.us/j/")) {
+        int start = input.indexOf("zoom.us/j/") + 10;
+        QString numStr = input.mid(start).split(
+            QRegularExpression("[?\\s]")).first();
+        numStr = numStr.replace(QRegularExpression("[^0-9]"), "");
+        if (numStr.isEmpty()) return;
+        param.meetingNumber = numStr.toULongLong();
+    } else {
+        QString numStr = input.replace(QRegularExpression("[\\s\\-]"), "");
+        numStr = numStr.replace(QRegularExpression("[^0-9]"), "");
+        if (numStr.isEmpty()) return;
+        param.meetingNumber = numStr.toULongLong();
+    }
+
+    ms->Join(joinParam);
     StartPostConnectRefreshTimer();
 }
 
@@ -604,13 +682,25 @@ void OnConnectClick() {
 // ---------------------------------------------------------------------------
 void SetupPluginMenu(void) {
     QMainWindow* mainWindow = (QMainWindow*)obs_frontend_get_main_window();
-    QMenuBar* menuBar = mainWindow->menuBar();
-    QMenu* feedsMenu = new QMenu("Feeds", menuBar);
+    QMenuBar*    menuBar    = mainWindow->menuBar();
+    QMenu*       feedsMenu  = new QMenu("Feeds", menuBar);
     menuBar->addMenu(feedsMenu);
-    g_connectAction = feedsMenu->addAction("Connect to Zoom...");
+
+    g_loginAction   = feedsMenu->addAction("Login to Zoom");
+    g_logoutAction  = feedsMenu->addAction("Logout of Zoom");
+    feedsMenu->addSeparator();
+    g_connectAction = feedsMenu->addAction("Connect to Zoom Meeting...");
+    feedsMenu->addSeparator();
     QAction* aboutAction = feedsMenu->addAction("About / Tier Status");
+
+    // Initial state: not logged in
+    g_logoutAction->setEnabled(false);
+    g_connectAction->setEnabled(false);
+
+    QObject::connect(g_loginAction,   &QAction::triggered, []() { OnLoginClick(); });
+    QObject::connect(g_logoutAction,  &QAction::triggered, []() { OnLogoutClick(); });
     QObject::connect(g_connectAction, &QAction::triggered, []() { OnConnectClick(); });
-    QObject::connect(aboutAction, &QAction::triggered, []() {
+    QObject::connect(aboutAction,     &QAction::triggered, []() {
         MessageBoxA(NULL, "Feeds v0.1\nTier: Basic\nStatus: Active",
                     "About", MB_OK);
     });
@@ -647,12 +737,21 @@ static obs_properties_t* zp_properties(void* data) {
                      ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING;
 
     if (!inMeeting) {
-        obs_properties_add_button(props, "connect_btn",
-            "Not connected to Zoom. Click to Connect...",
-            [](obs_properties_t*, obs_property_t*, void*) -> bool {
-                OnConnectClick();
-                return true;
-            });
+        if (!g_isLoggedIn) {
+            obs_properties_add_button(props, "login_btn",
+                "Not logged in to Zoom. Click to Login...",
+                [](obs_properties_t*, obs_property_t*, void*) -> bool {
+                    OnLoginClick();
+                    return true;
+                });
+        } else {
+            obs_properties_add_button(props, "connect_btn",
+                "Logged in. Click to Connect to Zoom Meeting...",
+                [](obs_properties_t*, obs_property_t*, void*) -> bool {
+                    OnConnectClick();
+                    return true;
+                });
+        }
     } else {
         std::string status_text = "Status: Connected";
         ZOOM_SDK_NAMESPACE::IMeetingInfo* info = ms->GetMeetingInfo();
@@ -699,7 +798,7 @@ static obs_properties_t* zp_properties(void* data) {
                 pc->GetParticipantsList();
             if (userList) {
                 for (int i = 0; i < userList->GetCount(); i++) {
-                    unsigned int uid = userList->GetItem(i);
+                    unsigned int uid  = userList->GetItem(i);
                     ZOOM_SDK_NAMESPACE::IUserInfo* info =
                         pc->GetUserByUserID(uid);
                     if (info) {
@@ -738,12 +837,21 @@ static obs_properties_t* zs_properties(void* data) {
                      ZOOM_SDK_NAMESPACE::MEETING_STATUS_INMEETING;
 
     if (!inMeeting) {
-        obs_properties_add_button(props, "connect_btn",
-            "Not connected to Zoom. Click to Connect...",
-            [](obs_properties_t*, obs_property_t*, void*) -> bool {
-                OnConnectClick();
-                return true;
-            });
+        if (!g_isLoggedIn) {
+            obs_properties_add_button(props, "login_btn",
+                "Not logged in to Zoom. Click to Login...",
+                [](obs_properties_t*, obs_property_t*, void*) -> bool {
+                    OnLoginClick();
+                    return true;
+                });
+        } else {
+            obs_properties_add_button(props, "connect_btn",
+                "Logged in. Click to Connect to Zoom Meeting...",
+                [](obs_properties_t*, obs_property_t*, void*) -> bool {
+                    OnConnectClick();
+                    return true;
+                });
+        }
     } else {
         std::string status_text = (g_activeSharerUserId != 0)
             ? "Status: Receiving screenshare"
@@ -790,8 +898,8 @@ void zs_destroy(void* data) {
 // ---------------------------------------------------------------------------
 // SOURCE INFO STRUCTS
 // ---------------------------------------------------------------------------
-struct obs_source_info zoom_participant_info = {};
-struct obs_source_info zoom_screenshare_info = {};
+struct obs_source_info zoom_participant_info  = {};
+struct obs_source_info zoom_screenshare_info  = {};
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("feeds", "en-US")
