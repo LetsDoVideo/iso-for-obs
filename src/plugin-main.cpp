@@ -14,8 +14,6 @@
 
 // Crypto for SHA-256 (Windows native, no OpenSSL needed)
 #include <wincrypt.h>
-#include <winhttp.h>
-#pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "ws2_32.lib")
 
@@ -182,40 +180,65 @@ static std::string ExchangeCodeForToken(const std::string& code,
         "&redirect_uri="  + UrlEncode("http://localhost:9847/callback") +
         "&code_verifier=" + UrlEncode(verifier);
 
-    HINTERNET hSession = WinHttpOpen(L"Feeds/1.0",
-                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                      WINHTTP_NO_PROXY_NAME,
-                                      WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return "";
+    HMODULE hWinHttp = LoadLibraryA("winhttp.dll");
+    if (!hWinHttp) return "";
 
-    HINTERNET hConnect = WinHttpConnect(hSession, L"zoom.us",
-                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", L"/oauth/token",
-                                             nullptr, WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                             WINHTTP_FLAG_SECURE);
+    typedef HINTERNET (WINAPI* PFN_Open)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
+    typedef HINTERNET (WINAPI* PFN_Connect)(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD);
+    typedef HINTERNET (WINAPI* PFN_OpenRequest)(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR*, DWORD);
+    typedef BOOL (WINAPI* PFN_AddHeaders)(HINTERNET, LPCWSTR, DWORD, DWORD);
+    typedef BOOL (WINAPI* PFN_SendRequest)(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
+    typedef BOOL (WINAPI* PFN_ReceiveResponse)(HINTERNET, LPVOID);
+    typedef BOOL (WINAPI* PFN_ReadData)(HINTERNET, LPVOID, DWORD, LPDWORD);
+    typedef BOOL (WINAPI* PFN_CloseHandle)(HINTERNET);
 
-    WinHttpAddRequestHeaders(hRequest,
-        L"Content-Type: application/x-www-form-urlencoded",
-        (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+    auto pfnOpen            = (PFN_Open)           GetProcAddress(hWinHttp, "WinHttpOpen");
+    auto pfnConnect         = (PFN_Connect)         GetProcAddress(hWinHttp, "WinHttpConnect");
+    auto pfnOpenRequest     = (PFN_OpenRequest)     GetProcAddress(hWinHttp, "WinHttpOpenRequest");
+    auto pfnAddHeaders      = (PFN_AddHeaders)      GetProcAddress(hWinHttp, "WinHttpAddRequestHeaders");
+    auto pfnSendRequest     = (PFN_SendRequest)     GetProcAddress(hWinHttp, "WinHttpSendRequest");
+    auto pfnReceiveResponse = (PFN_ReceiveResponse) GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
+    auto pfnReadData        = (PFN_ReadData)        GetProcAddress(hWinHttp, "WinHttpReadData");
+    auto pfnClose           = (PFN_CloseHandle)     GetProcAddress(hWinHttp, "WinHttpCloseHandle");
 
-    WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                       (LPVOID)body.c_str(), (DWORD)body.size(),
-                       (DWORD)body.size(), 0);
-    WinHttpReceiveResponse(hRequest, nullptr);
+    if (!pfnOpen || !pfnConnect || !pfnOpenRequest || !pfnSendRequest ||
+        !pfnReceiveResponse || !pfnReadData || !pfnClose) {
+        FreeLibrary(hWinHttp);
+        return "";
+    }
+
+    HINTERNET hSession = pfnOpen(L"Feeds/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET hConnect = pfnConnect(hSession, L"zoom.us",
+                                     INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET hRequest = pfnOpenRequest(hConnect, L"POST", L"/oauth/token",
+                                         nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                         WINHTTP_FLAG_SECURE);
+
+    if (pfnAddHeaders)
+        pfnAddHeaders(hRequest,
+                      L"Content-Type: application/x-www-form-urlencoded",
+                      (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+
+    pfnSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                   (LPVOID)body.c_str(), (DWORD)body.size(),
+                   (DWORD)body.size(), 0);
+    pfnReceiveResponse(hRequest, nullptr);
 
     std::string response;
     char buf[4096];
     DWORD bytesRead = 0;
-    while (WinHttpReadData(hRequest, buf, sizeof(buf) - 1, &bytesRead) &&
+    while (pfnReadData(hRequest, buf, sizeof(buf) - 1, &bytesRead) &&
            bytesRead > 0) {
         buf[bytesRead] = '\0';
         response += buf;
     }
 
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
+    pfnClose(hRequest);
+    pfnClose(hConnect);
+    pfnClose(hSession);
+    FreeLibrary(hWinHttp);
     return response;
 }
 
@@ -866,14 +889,16 @@ void OnLoginClick() {
     std::string challenge = DeriveCodeChallenge(g_pkceVerifier);
 
     // Build the Zoom authorization URL
+    // prompt=login forces Zoom to show the account chooser even if
+    // the user is already logged in — important for multi-account users
     std::string authUrl =
-    "https://zoom.us/oauth/authorize"
-    "?response_type=code"
-    "&client_id=JlP6KfRqTt6r0t67FcDuqQ"
-    "&redirect_uri="          + UrlEncode("http://localhost:9847/callback") +
-    "&code_challenge="        + challenge +
-    "&code_challenge_method=S256"
-    "&prompt=login";
+        "https://zoom.us/oauth/authorize"
+        "?response_type=code"
+        "&client_id=JlP6KfRqTt6r0t67FcDuqQ"
+        "&redirect_uri="          + UrlEncode("http://localhost:9847/callback") +
+        "&code_challenge="        + challenge +
+        "&code_challenge_method=S256"
+        "&prompt=login";
 
     // Open the system browser to the Zoom login page
     ShellExecuteA(NULL, "open", authUrl.c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -913,11 +938,14 @@ void OnLogoutClick() {
     MessageBoxA(NULL, "You have been logged out of Zoom.",
                 "Feeds - Logout", MB_OK | MB_ICONINFORMATION);
 }
+
 // ---------------------------------------------------------------------------
 // FETCH USER INFO (ZAK + display name) via Zoom REST API
-// Returns true on success, fills out zak and displayName
+// Must be called from a background thread or after auth — makes blocking
+// HTTPS calls. Returns true on success, fills zak and displayName.
 // ---------------------------------------------------------------------------
 static bool FetchUserInfo(std::string& zak, std::string& displayName) {
+
     auto doGet = [](const std::wstring& path) -> std::string {
         HINTERNET hSession = WinHttpOpen(L"Feeds/1.0",
                                           WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -930,16 +958,13 @@ static bool FetchUserInfo(std::string& zak, std::string& displayName) {
                                                  nullptr, WINHTTP_NO_REFERER,
                                                  WINHTTP_DEFAULT_ACCEPT_TYPES,
                                                  WINHTTP_FLAG_SECURE);
-        // Authorization: Bearer {access_token}
         std::wstring authHeader = L"Authorization: Bearer " +
             std::wstring(g_accessToken.begin(), g_accessToken.end());
         WinHttpAddRequestHeaders(hRequest, authHeader.c_str(),
                                  (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
-
         WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                            nullptr, 0, 0, 0);
         WinHttpReceiveResponse(hRequest, nullptr);
-
         std::string response;
         char buf[4096];
         DWORD bytesRead = 0;
@@ -954,27 +979,32 @@ static bool FetchUserInfo(std::string& zak, std::string& displayName) {
         return response;
     };
 
-    // Get display name from /v2/users/me
+    // Get display name from /v2/users/me  (requires user:read:user scope)
     std::string userResponse = doGet(L"/v2/users/me");
     displayName = JsonExtractString(userResponse, "display_name");
     if (displayName.empty())
         displayName = JsonExtractString(userResponse, "first_name");
 
-    // Get ZAK from /v2/users/me/zak
+    // Get ZAK from /v2/users/me/zak  (requires user:read:zak scope)
     std::string zakResponse = doGet(L"/v2/users/me/zak");
     zak = JsonExtractString(zakResponse, "token");
 
     if (zak.empty() || displayName.empty()) {
-        // Show raw responses to diagnose the problem
+        // Show raw API responses to help diagnose scope or token problems
         std::string errMsg =
-            "API call failed.\n\n"
-            "/users/me response:\n" + userResponse.substr(0, 200) + "\n\n"
-            "/users/me/zak response:\n" + zakResponse.substr(0, 200);
-        MessageBoxA(NULL, errMsg.c_str(), "Feeds - API Debug", MB_OK | MB_ICONERROR);
+            "Could not retrieve your Zoom account details.\n\n"
+            "/users/me response:\n" +
+            userResponse.substr(0, 300) + "\n\n"
+            "/users/me/zak response:\n" +
+            zakResponse.substr(0, 300);
+        MessageBoxA(NULL, errMsg.c_str(),
+                    "Feeds - API Debug", MB_OK | MB_ICONERROR);
         return false;
     }
 
     return true;
+}
+
 // ---------------------------------------------------------------------------
 // CONNECT TO MEETING HELPER
 // ---------------------------------------------------------------------------
@@ -1010,17 +1040,17 @@ void OnConnectClick() {
         QLineEdit::Normal, "", &okPwd);
     if (!okPwd) return;
 
-    // Fetch ZAK and display name using our OAuth access token
+    input = input.trimmed();
+
+    // Fetch ZAK and display name using our OAuth access token.
+    // ZAK identifies the user to Zoom: grants host privileges,
+    // bypasses waiting room for own meetings, and satisfies the
+    // March 2026 external-meeting authorization requirement.
     std::string zak, displayName;
     if (!FetchUserInfo(zak, displayName)) {
-        MessageBoxA(NULL,
-            "Could not retrieve your Zoom account details.\n\n"
-            "Your login may have expired — please log out and log in again.",
-            "Feeds - Error", MB_OK | MB_ICONERROR);
+        // FetchUserInfo already showed a diagnostic message box
         return;
     }
-
-    input = input.trimmed();
 
     ZOOM_SDK_NAMESPACE::JoinParam joinParam;
     joinParam.userType = ZOOM_SDK_NAMESPACE::SDK_UT_WITHOUT_LOGIN;
@@ -1031,13 +1061,12 @@ void OnConnectClick() {
 
     // Join as the authenticated user, not as anonymous "Feeds"
     static std::wstring s_userName;
-    s_userName = std::wstring(displayName.begin(), displayName.end());
+    s_userName     = std::wstring(displayName.begin(), displayName.end());
     param.userName = s_userName.c_str();
 
-    // ZAK identifies the user to Zoom — grants host privileges,
-    // bypasses waiting room for own meetings, satisfies March 2026 requirement
+    // Pass ZAK so Zoom recognises the user
     static std::wstring s_zak;
-    s_zak = std::wstring(zak.begin(), zak.end());
+    s_zak        = std::wstring(zak.begin(), zak.end());
     param.userZAK = s_zak.c_str();
 
     static std::wstring s_password;
@@ -1049,7 +1078,7 @@ void OnConnectClick() {
     static std::wstring s_vanityId;
 
     if (input.contains("zoom.us/my/")) {
-        int start = input.indexOf("zoom.us/my/") + 11;
+        int start    = input.indexOf("zoom.us/my/") + 11;
         QString vanityId = input.mid(start).split(
             QRegularExpression("[?\\s]")).first();
         s_vanityId     = vanityId.toStdWString();
