@@ -14,6 +14,8 @@
 
 // Crypto for SHA-256 (Windows native, no OpenSSL needed)
 #include <wincrypt.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "ws2_32.lib")
 
@@ -180,65 +182,40 @@ static std::string ExchangeCodeForToken(const std::string& code,
         "&redirect_uri="  + UrlEncode("http://localhost:9847/callback") +
         "&code_verifier=" + UrlEncode(verifier);
 
-    HMODULE hWinHttp = LoadLibraryA("winhttp.dll");
-    if (!hWinHttp) return "";
+    HINTERNET hSession = WinHttpOpen(L"Feeds/1.0",
+                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                      WINHTTP_NO_PROXY_NAME,
+                                      WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return "";
 
-    typedef HINTERNET (WINAPI* PFN_Open)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
-    typedef HINTERNET (WINAPI* PFN_Connect)(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD);
-    typedef HINTERNET (WINAPI* PFN_OpenRequest)(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR*, DWORD);
-    typedef BOOL (WINAPI* PFN_AddHeaders)(HINTERNET, LPCWSTR, DWORD, DWORD);
-    typedef BOOL (WINAPI* PFN_SendRequest)(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
-    typedef BOOL (WINAPI* PFN_ReceiveResponse)(HINTERNET, LPVOID);
-    typedef BOOL (WINAPI* PFN_ReadData)(HINTERNET, LPVOID, DWORD, LPDWORD);
-    typedef BOOL (WINAPI* PFN_CloseHandle)(HINTERNET);
+    HINTERNET hConnect = WinHttpConnect(hSession, L"zoom.us",
+                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", L"/oauth/token",
+                                             nullptr, WINHTTP_NO_REFERER,
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                             WINHTTP_FLAG_SECURE);
 
-    auto pfnOpen            = (PFN_Open)           GetProcAddress(hWinHttp, "WinHttpOpen");
-    auto pfnConnect         = (PFN_Connect)         GetProcAddress(hWinHttp, "WinHttpConnect");
-    auto pfnOpenRequest     = (PFN_OpenRequest)     GetProcAddress(hWinHttp, "WinHttpOpenRequest");
-    auto pfnAddHeaders      = (PFN_AddHeaders)      GetProcAddress(hWinHttp, "WinHttpAddRequestHeaders");
-    auto pfnSendRequest     = (PFN_SendRequest)     GetProcAddress(hWinHttp, "WinHttpSendRequest");
-    auto pfnReceiveResponse = (PFN_ReceiveResponse) GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
-    auto pfnReadData        = (PFN_ReadData)        GetProcAddress(hWinHttp, "WinHttpReadData");
-    auto pfnClose           = (PFN_CloseHandle)     GetProcAddress(hWinHttp, "WinHttpCloseHandle");
+    WinHttpAddRequestHeaders(hRequest,
+        L"Content-Type: application/x-www-form-urlencoded",
+        (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
 
-    if (!pfnOpen || !pfnConnect || !pfnOpenRequest || !pfnSendRequest ||
-        !pfnReceiveResponse || !pfnReadData || !pfnClose) {
-        FreeLibrary(hWinHttp);
-        return "";
-    }
-
-    HINTERNET hSession = pfnOpen(L"Feeds/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    HINTERNET hConnect = pfnConnect(hSession, L"zoom.us",
-                                     INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET hRequest = pfnOpenRequest(hConnect, L"POST", L"/oauth/token",
-                                         nullptr, WINHTTP_NO_REFERER,
-                                         WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                         WINHTTP_FLAG_SECURE);
-
-    if (pfnAddHeaders)
-        pfnAddHeaders(hRequest,
-                      L"Content-Type: application/x-www-form-urlencoded",
-                      (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
-
-    pfnSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                   (LPVOID)body.c_str(), (DWORD)body.size(),
-                   (DWORD)body.size(), 0);
-    pfnReceiveResponse(hRequest, nullptr);
+    WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                       (LPVOID)body.c_str(), (DWORD)body.size(),
+                       (DWORD)body.size(), 0);
+    WinHttpReceiveResponse(hRequest, nullptr);
 
     std::string response;
     char buf[4096];
     DWORD bytesRead = 0;
-    while (pfnReadData(hRequest, buf, sizeof(buf) - 1, &bytesRead) &&
+    while (WinHttpReadData(hRequest, buf, sizeof(buf) - 1, &bytesRead) &&
            bytesRead > 0) {
         buf[bytesRead] = '\0';
         response += buf;
     }
 
-    pfnClose(hRequest);
-    pfnClose(hConnect);
-    pfnClose(hSession);
-    FreeLibrary(hWinHttp);
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
     return response;
 }
 
