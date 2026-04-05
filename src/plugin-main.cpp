@@ -199,6 +199,23 @@ static std::string ExchangeCodeForToken(const std::string& code,
         L"Content-Type: application/x-www-form-urlencoded",
         (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
 
+    // Basic auth with client_id and empty secret for public client
+    std::string credStr = "JlP6KfRqTt6r0t67FcDuqQ:";
+    DWORD b64Len = 0;
+    CryptBinaryToStringA((const BYTE*)credStr.data(), (DWORD)credStr.size(),
+                          CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
+                          nullptr, &b64Len);
+    std::string b64(b64Len, '\0');
+    CryptBinaryToStringA((const BYTE*)credStr.data(), (DWORD)credStr.size(),
+                          CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
+                          &b64[0], &b64Len);
+    while (!b64.empty() && (b64.back() == '\0' || b64.back() == '\n'))
+        b64.pop_back();
+    std::wstring basicAuth = L"Authorization: Basic " +
+                              std::wstring(b64.begin(), b64.end());
+    WinHttpAddRequestHeaders(hRequest, basicAuth.c_str(),
+                             (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+
     WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                        (LPVOID)body.c_str(), (DWORD)body.size(),
                        (DWORD)body.size(), 0);
