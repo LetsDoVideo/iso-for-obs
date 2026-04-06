@@ -735,6 +735,52 @@ static void StartPostConnectRefreshTimer() {
     });
     timer->start();
 }
+// ---------------------------------------------------------------------------
+// TOKEN PERSISTENCE via Windows Registry
+// ---------------------------------------------------------------------------
+static void SaveTokensToRegistry() {
+    HKEY hKey;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Feeds", 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr,
+                        &hKey, nullptr) != ERROR_SUCCESS)
+        return;
+    RegSetValueExA(hKey, "access_token", 0, REG_SZ,
+                   (const BYTE*)g_accessToken.c_str(),
+                   (DWORD)g_accessToken.size() + 1);
+    RegSetValueExA(hKey, "refresh_token", 0, REG_SZ,
+                   (const BYTE*)g_refreshToken.c_str(),
+                   (DWORD)g_refreshToken.size() + 1);
+    RegCloseKey(hKey);
+}
+
+static bool LoadTokensFromRegistry() {
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Feeds", 0,
+                      KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+    char buf[4096];
+    DWORD size = sizeof(buf);
+    DWORD type = REG_SZ;
+    if (RegQueryValueExA(hKey, "access_token", nullptr, &type,
+                         (BYTE*)buf, &size) == ERROR_SUCCESS)
+        g_accessToken = std::string(buf, size - 1);
+    size = sizeof(buf);
+    if (RegQueryValueExA(hKey, "refresh_token", nullptr, &type,
+                         (BYTE*)buf, &size) == ERROR_SUCCESS)
+        g_refreshToken = std::string(buf, size - 1);
+    RegCloseKey(hKey);
+    return !g_accessToken.empty();
+}
+
+static void ClearTokensFromRegistry() {
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Feeds", 0,
+                      KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return;
+    RegDeleteValueA(hKey, "access_token");
+    RegDeleteValueA(hKey, "refresh_token");
+    RegCloseKey(hKey);
+}
 
 // ---------------------------------------------------------------------------
 // SDK AUTH — called on Qt main thread after token exchange succeeds
@@ -859,6 +905,7 @@ static void RunPKCEListener(std::string verifier) {
 
     g_accessToken  = accessToken;
     g_refreshToken = refreshToken;
+    SaveTokensToRegistry();
 
     // Fire SDK auth on the Qt main thread
     QTimer::singleShot(0, (QObject*)obs_frontend_get_main_window(),
@@ -924,6 +971,7 @@ void OnLogoutClick() {
     g_accessToken.clear();
     g_refreshToken.clear();
     g_pkceVerifier.clear();
+    ClearTokensFromRegistry();
 
     if (g_loginAction)   g_loginAction->setEnabled(true);
     if (g_logoutAction)  g_logoutAction->setEnabled(false);
@@ -1352,8 +1400,13 @@ bool obs_module_load(void) {
     ZOOM_SDK_NAMESPACE::InitSDK(initParam);
 
     obs_frontend_add_event_callback([](enum obs_frontend_event event, void*) {
-        if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING)
+        if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
             SetupPluginMenu();
+            // Auto-login if we have stored tokens
+            if (LoadTokensFromRegistry()) {
+                DoSDKAuth();
+            }
+        }
     }, nullptr);
 
     return true;
