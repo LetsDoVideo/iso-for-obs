@@ -87,6 +87,7 @@ static unsigned int g_activeSpeakerUserId = 0;
 static std::string g_pkceVerifier;
 static std::string g_accessToken;
 static std::string g_refreshToken;
+static std::string g_userDisplayName;
 
 // ---------------------------------------------------------------------------
 // PKCE HELPERS
@@ -1066,6 +1067,7 @@ static bool FetchUserInfo(std::string& zak, std::string& displayName) {
     displayName = JsonExtractString(userResponse, "display_name");
     if (displayName.empty())
         displayName = JsonExtractString(userResponse, "first_name");
+    g_userDisplayName = displayName; 
 
     // Get ZAK from /v2/users/me/zak  (requires user:read:zak scope)
     std::string zakResponse = ZoomApiGet(L"/v2/users/me/zak");
@@ -1209,9 +1211,14 @@ void SetupPluginMenu(void) {
                      []() { OnLogoutClick(); });
     QObject::connect(g_connectAction, &QAction::triggered,
                      []() { OnConnectClick(); });
-    QObject::connect(aboutAction,     &QAction::triggered, []() {
-        MessageBoxA(NULL, "Feeds v0.1\nTier: Basic\nStatus: Active",
-                    "About", MB_OK);
+    QObject::connect(aboutAction, &QAction::triggered, []() {
+        std::string info = "Feeds v0.1\n";
+        if (g_isLoggedIn && !g_userDisplayName.empty())
+            info += "Logged in as: " + g_userDisplayName + "\n";
+        else
+            info += "Not logged in\n";
+        info += "Tier: Basic\nStatus: Active";
+        MessageBoxA(NULL, info.c_str(), "About Feeds", MB_OK);
     });
 }
 
